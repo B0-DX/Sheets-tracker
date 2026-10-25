@@ -1,0 +1,171 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Sheets Tracker</title>
+<style>
+:root{--bg:#f5f6fa;--card:#fff;--text:#1b1f2a;--muted:#6b7280;--accent:#4f46e5;--ok:#16a34a;--warn:#d97706;--bad:#dc2626;--line:#e5e7eb}
+@media (prefers-color-scheme:dark){:root{--bg:#0f1117;--card:#181b24;--text:#eef0f5;--muted:#9aa1b2;--accent:#818cf8;--line:#262a36}}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--text);font-family:system-ui,-apple-system,"Segoe UI",sans-serif}
+.wrap{max-width:720px;margin:0 auto;padding:20px 16px 60px}
+h1{font-size:22px;margin:0 0 4px}
+.sub{color:var(--muted);font-size:14px;margin:0 0 16px}
+.btn{border:0;border-radius:10px;padding:10px 16px;font-size:15px;font-weight:600;cursor:pointer;background:var(--accent);color:#fff}
+.btn.ghost{background:transparent;color:var(--muted);border:1px solid var(--line)}
+.btn.done{background:var(--ok)}
+.btn:disabled{opacity:.5}
+form{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:14px;margin:14px 0;display:none;gap:10px;flex-direction:column}
+form.open{display:flex}
+input{width:100%;padding:10px;border-radius:8px;border:1px solid var(--line);background:var(--bg);color:var(--text);font-size:15px}
+label{font-size:13px;color:var(--muted)}
+.row{display:flex;gap:10px}.row>div{flex:1}
+.bar{display:flex;gap:8px;align-items:center;justify-content:space-between;flex-wrap:wrap}
+.card{position:relative;background:var(--card);border:1px solid var(--line);border-radius:14px;padding:16px;margin:12px 0;overflow:hidden}
+.card h2{margin:0;font-size:18px}
+.card .meta{color:var(--muted);font-size:13px;margin-top:2px}
+.note-txt{margin-top:8px;font-size:14px;white-space:pre-wrap;background:var(--bg);border-radius:8px;padding:8px 10px}
+.timer{font-variant-numeric:tabular-nums;font-size:22px;font-weight:700;margin:12px 0 4px}
+.timer.warn{color:var(--warn)}.timer.bad{color:var(--bad)}
+.check{position:absolute;top:8px;right:14px;font-size:64px;line-height:1;color:var(--ok);opacity:.9;pointer-events:none}
+.card.isdone{border-color:var(--ok)}
+.card.ended::before{content:"";position:absolute;left:0;right:0;top:50%;height:3px;background:var(--bad);opacity:.75;pointer-events:none;z-index:2}
+.card.ended::after{content:"ENDED";position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);background:var(--bad);color:#fff;font-size:13px;font-weight:800;letter-spacing:2px;padding:3px 12px;border-radius:6px;pointer-events:none;z-index:3}
+.actions{display:flex;gap:8px;margin-top:10px}
+.empty{text-align:center;color:var(--muted);padding:40px 0}
+.note{font-size:12px;color:var(--muted);text-align:center;margin-top:20px}
+#toast{display:none;position:fixed;left:16px;right:16px;bottom:20px;z-index:60;color:#fff;padding:12px 14px;border-radius:10px;font-size:14px;text-align:center}
+#toast.show{display:block}
+#modal{display:none;position:fixed;inset:0;background:rgba(0,0,0,.55);align-items:center;justify-content:center;z-index:50;padding:20px}
+#modal.open{display:flex}
+#modal .box{background:var(--card);border-radius:14px;padding:20px;max-width:340px;width:100%}
+#modal p{margin:0 0 6px;font-size:16px;font-weight:600}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="bar">
+    <div><h1>📚 Sheets Tracker</h1><p class="sub" id="sub">Computer Engineering batch</p></div>
+    <div class="actions" style="margin:0"><button class="btn" id="toggle">+ Add sheet</button></div>
+  </div>
+  <form id="form">
+    <div><label>Subject</label><input id="subject" required maxlength="60" placeholder="e.g. Digital Logic"></div>
+    <div class="row">
+      <div><label>Sheet number</label><input id="num" required maxlength="10" placeholder="3"></div>
+      <div><label id="dayslbl">Deadline in (days)</label><input id="days" type="number" min="0" max="120" required placeholder="7"></div>
+    </div>
+    <div><label>Note (optional)</label><input id="note" maxlength="200" placeholder="e.g. Problems 1-5 only"></div>
+    <button class="btn" type="submit" id="submitbtn">Confirm</button>
+  </form>
+  <div id="list"><div class="empty">Loading…</div></div>
+  <p class="note">Everyone in the batch sees the same sheets.</p>
+</div>
+<div id="toast"></div>
+<div id="modal"><div class="box"><p id="mt"></p><div class="actions"><button class="btn ghost" id="mn">Cancel</button><button class="btn" id="my" style="background:var(--bad)"></button></div></div></div>
+
+<script type="module">
+import {initializeApp} from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
+import {getAuth,signInAnonymously,onAuthStateChanged} from "https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js";
+import {getFirestore,collection,addDoc,updateDoc,deleteDoc,doc,onSnapshot} from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
+
+// ====== PASTE YOUR FIREBASE CONFIG HERE ======
+const firebaseConfig = {
+  apiKey: "AIzaSyDGbxuDAjdIe9l1WT5FaVoyT6Wte-V9s68",
+  authDomain: "sheets-3bde3.firebaseapp.com",
+  projectId: "sheets-3bde3",
+  appId: "1:1002421971129:web:9466212a3de89004961368"
+};
+// =============================================
+
+const app=initializeApp(firebaseConfig), auth=getAuth(app), db=getFirestore(app);
+const $=i=>document.getElementById(i);
+const esc=s=>{const d=document.createElement('div');d.textContent=s;return d.innerHTML};
+let sheets=[], user=null;
+
+function toast(msg,bad){const t=$('toast');t.textContent=msg;t.style.background=bad?'var(--bad)':'var(--ok)';t.className='show';setTimeout(()=>t.className='',bad?8000:2500)}
+
+function render(){
+  const list=$('list');
+  if(!sheets.length){list.innerHTML='<div class="empty">No sheets yet.</div>';return}
+  list.innerHTML=[...sheets].sort((a,b)=>a.deadline-b.deadline).map(s=>{
+    const mine=!!user;
+    return `<div class="card" data-id="${s.id}">`+
+      `<h2>${esc(s.subject)} — Sheet ${esc(s.num)}</h2>`+
+      `<div class="meta">Due ${new Date(s.deadline).toLocaleDateString(undefined,{weekday:'short',day:'numeric',month:'short'})}</div>`+
+      (s.note?`<div class="note-txt">📝 ${esc(s.note)}</div>`:'')+
+      `<div class="timer" data-dl="${s.deadline}"></div>`+
+      (mine?'<div class="actions"><button class="btn ghost" data-act="edit">Edit</button><button class="btn ghost" data-act="del">Delete</button></div>':'')+'</div>';
+  }).join('');
+  tick();
+}
+function tick(){
+  document.querySelectorAll('.timer').forEach(el=>{
+    const left=+el.dataset.dl-Date.now(), card=el.parentNode, fin=card.classList.contains('isdone');
+    if(left<=0){card.classList.add('ended');el.textContent='Ended';el.className='timer';return}
+    card.classList.remove('ended');
+    const d=Math.floor(left/864e5),h=Math.floor(left%864e5/36e5),m=Math.floor(left%36e5/6e4),s=Math.floor(left%6e4/1e3);
+    el.textContent=`${d}d ${String(h).padStart(2,'0')}h ${String(m).padStart(2,'0')}m ${String(s).padStart(2,'0')}s`;
+    el.className='timer'+(left<864e5&&!fin?' bad':left<3*864e5&&!fin?' warn':'');
+  });
+}
+setInterval(tick,1000);
+
+onSnapshot(collection(db,'sheets'),snap=>{
+  sheets=snap.docs.map(d=>({...d.data(),id:d.id}));render();
+},()=>{$('list').innerHTML='<div class="empty">Could not load sheets. Check Firebase config.</div>'});
+
+onAuthStateChanged(auth,u=>{user=u;render()});
+signInAnonymously(auth).catch(e=>toast('Connection problem: '+e.code,true));
+let editId=null;
+function resetForm(){
+  editId=null;$('form').reset();$('days').required=true;
+  $('dayslbl').textContent='Deadline in (days)';$('days').placeholder='7';$('submitbtn').textContent='Confirm';
+}
+$('toggle').onclick=()=>{
+  const f=$('form');
+  if(f.classList.contains('open')){f.classList.remove('open');resetForm()}
+  else{resetForm();f.classList.add('open')}
+};
+
+$('form').onsubmit=async e=>{
+  e.preventDefault();
+  if(!user){toast('Still connecting, try again in a second',true);return}
+  const data={subject:$('subject').value.trim(),num:$('num').value.trim(),note:$('note').value.trim()};
+  const daysVal=$('days').value;
+  if(daysVal!==''){const dl=new Date();dl.setDate(dl.getDate()+Number(daysVal));dl.setHours(23,59,0,0);data.deadline=dl.getTime()}
+  try{
+    if(editId){await updateDoc(doc(db,'sheets',editId),data);toast('Sheet updated')}
+    else{await addDoc(collection(db,'sheets'),{...data,createdAt:Date.now(),createdBy:user.uid})}
+    $('form').classList.remove('open');resetForm();
+  }catch(err){toast('Could not save: '+err.code,true)}
+};
+
+$('list').onclick=async e=>{
+  const b=e.target.closest('button');if(!b||!user)return;
+  const id=b.closest('.card').dataset.id;if(!id)return;
+  if(b.dataset.act==='del'){askDelete(id)}
+  else if(b.dataset.act==='edit'){
+    const sh=sheets.find(x=>x.id===id);if(!sh)return;
+    resetForm();editId=id;
+    $('subject').value=sh.subject||'';$('num').value=sh.num||'';$('note').value=sh.note||'';
+    $('days').required=false;$('days').placeholder='Leave empty to keep';
+    $('dayslbl').textContent='New deadline in (days) — leave empty to keep current';
+    $('submitbtn').textContent='Save changes';
+    $('form').classList.add('open');window.scrollTo({top:0,behavior:'smooth'});
+  }
+};
+
+function askDelete(id){
+  let step=1;const m=$('modal');
+  $('mt').textContent='Delete this sheet for everyone?';$('my').textContent='Yes, delete';m.className='open';
+  $('mn').onclick=()=>m.className='';
+  $('my').onclick=async()=>{
+    if(step===1){step=2;$('mt').textContent='Are you absolutely sure? This cannot be undone.';$('my').textContent='Yes, delete permanently';return}
+    m.className='';
+    try{await deleteDoc(doc(db,'sheets',id));toast('Sheet deleted')}catch(err){toast('Delete failed: '+err.code,true)}
+  };
+}
+</script>
+</body>
+</html>
